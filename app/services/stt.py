@@ -5,12 +5,18 @@ from pydub import AudioSegment
 
 STT_BACKEND = os.getenv("STT_BACKEND", "vosk")
 
+# Default path to bundled Vosk model (can be overridden via env)
+BASE_DIR = os.path.dirname(__file__)
+DEFAULT_VOSK_MODEL_PATH = os.path.join(BASE_DIR, "models", "vosk-model-small-ru-0.22")
+
 # ---- VOSK offline backend ----
-def vosk_transcribe(filepath: str, model_path: str = "./models/vosk-model-small-ru-0.22"):
+def vosk_transcribe(filepath: str, model_path: str | None = None):
     """
     filepath: path to audio file (ogg/oga/ogg/opus/etc). We'll convert to wav 16k mono.
-    model_path: local vosk model directory (you must download manually).
+    model_path: local vosk model directory (you must download manually or use bundled one).
     """
+    if model_path is None:
+        model_path = DEFAULT_VOSK_MODEL_PATH
     try:
         from vosk import Model, KaldiRecognizer
     except Exception as e:
@@ -54,21 +60,21 @@ def vosk_transcribe(filepath: str, model_path: str = "./models/vosk-model-small-
     return " ".join(result_text).strip()
 
 # ---- Optional OpenAI backend (paid) ----
-def openai_transcribe(filepath: str):
-    import openai, os
-    openai.api_key = os.getenv("OPENAI_API_KEY")
-    if not openai.api_key:
-        raise RuntimeError("OPENAI_API_KEY not set")
+#def openai_transcribe(filepath: str):
+ #   import openai, os
+  #  openai.api_key = os.getenv("OPENAI_API_KEY")
+  #  if not openai.api_key:
+  #      raise RuntimeError("OPENAI_API_KEY not set")
     # Convert to acceptable format if needed
-    audio_file = open(filepath, "rb")
-    resp = openai.Audio.transcribe("gpt-4o-transcribe", audio_file)  # example; check API model name
-    return resp.get("text", "")
+   # audio_file = open(filepath, "rb")
+    #resp = openai.Audio.transcribe("gpt-4o-transcribe", audio_file)  # example; check API model name
+    #return resp.get("text", "")
 
 # ---- Public function ----
 def transcribe(filepath: str) -> str:
     if STT_BACKEND == "vosk":
-        # model path can be overriden via env
-        model_path = os.getenv("VOSK_MODEL_PATH", "./models/vosk-model-small-ru-0.22")
+        # model path can be overridden via env, fallback to bundled default
+        model_path = os.getenv("VOSK_MODEL_PATH", DEFAULT_VOSK_MODEL_PATH)
         return vosk_transcribe(filepath, model_path=model_path)
     elif STT_BACKEND == "openai":
         return openai_transcribe(filepath)

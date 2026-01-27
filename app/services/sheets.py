@@ -4,7 +4,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 
-SHEET_NAME = os.getenv("SPREADSHEET_NAME", "Anuar Sales 2026")
+SHEET_NAME = os.getenv("SPREADSHEET_NAME", "Anuar Traffic 2026")
 CREDS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON", "./credentials.json")
 
 def get_sheet():
@@ -17,7 +17,7 @@ def get_sheet():
 def append_offline_row(row_dict: dict):
     """
     row_dict keys:
-    Date, Time, Client_ID, Type_of_client, Behavior, Purchase_status, Ticket_amount,
+    Date, Time, Client_ID, Type_of_client, Behavior, Purchase_status, Ticket_amount, Cost_Price, Source, 
     Reason_not_buying, Product_name, Quantity, Transcription_raw, Repeat_visit, Contact_left, Short_note
     """
     sh = get_sheet()
@@ -31,10 +31,10 @@ def append_offline_row(row_dict: dict):
     ws.append_row(values, value_input_option="USER_ENTERED")
     return True
 
-def append_target_row(row_dict: dict):
-    sh = get_sheet()
-    ws = sh.worksheet("Target Leads")
-    header = ws.row_values(1)
-    values = [row_dict.get(h, "") for h in header]
-    ws.append_row(values, value_input_option="USER_ENTERED")
-    return True
+#def append_target_row(row_dict: dict):
+    #sh = get_sheet()
+    #ws = sh.worksheet("Target Leads")
+   # header = ws.row_values(1)
+  #  values = [row_dict.get(h, "") for h in header]
+ #   ws.append_row(values, value_input_option="USER_ENTERED")
+#    return True
