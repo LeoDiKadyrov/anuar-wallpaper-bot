@@ -1,0 +1,7 @@
+python-telegram-bot==20.0
+fastapi
+uvicorn
+gspread
+google-auth
+openai          # если будешь использовать OpenAI APIs (Whisper via API)
+python-dotenv
