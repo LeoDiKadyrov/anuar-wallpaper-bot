@@ -2,6 +2,7 @@
 import os
 import wave
 from pydub import AudioSegment
+from typing import Optional
 
 STT_BACKEND = os.getenv("STT_BACKEND", "vosk")
 
@@ -10,7 +11,7 @@ BASE_DIR = os.path.dirname(__file__)
 DEFAULT_VOSK_MODEL_PATH = os.path.join(BASE_DIR, "models", "vosk-model-small-ru-0.22")
 
 # ---- VOSK offline backend ----
-def vosk_transcribe(filepath: str, model_path: str | None = None):
+def vosk_transcribe(filepath: str, model_path: Optional[str] = None) -> str:
     """
     filepath: path to audio file (ogg/oga/ogg/opus/etc). We'll convert to wav 16k mono.
     model_path: local vosk model directory (you must download manually or use bundled one).
