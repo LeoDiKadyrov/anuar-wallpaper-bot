@@ -63,6 +63,10 @@ async def voice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.reply_text("Блять я захуярил голосовое: " + str(e))
         text = ""
 
+    # Явно подсветим случай, когда ничего не распознано
+    if not text:
+        await msg.reply_text("Не смог нормально распознать голос — текст пустой. Я все равно сохраню визит, но без текста.")
+
     # Pre-fill a row dict in user_data
     quantity_guess = _guess_quantity_from_transcription(text)
     row = {
