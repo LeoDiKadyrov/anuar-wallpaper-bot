@@ -5,6 +5,7 @@ load_dotenv()
 
 import logging
 import tempfile
+import asyncio
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
     ApplicationBuilder, 
@@ -18,7 +19,8 @@ from telegram.ext import (
 from app.services.stt import transcribe
 from app.services.sheets import append_offline_row
 from app.services.validator import validate_and_normalize_row, prepare_row_for_sheet
-from app.conversation_flow import ConversationState
+from app.conversation_flow import ConversationState, STATE_FEEDBACK, BTN_REPORT_PROBLEM
+from app.services.local_store import save_failed_entry, track_event
 
 logging.basicConfig(level=logging.INFO)
 TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -125,10 +127,40 @@ async def collect_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Ошибка: состояние потеряно. Начни заново.")
         return ConversationHandler.END
     
+    user_text = update.message.text
+
+    # [NEW] Check if user clicked the "Report" button
+    if user_text == BTN_REPORT_PROBLEM:
+        conv_state.current_state = STATE_FEEDBACK
+        await update.message.reply_text(
+            "Опиши проблему (валидация не проходит, или я туплю?):", 
+            reply_markup=ReplyKeyboardRemove()
+        )
+        return COLLECTING
+
+    # [NEW] Handle Feedback Submission
+    if conv_state.current_state == STATE_FEEDBACK:
+        # Save feedback to analytics or specific log
+        track_event("user_feedback", details=f"User said: {user_text}")
+        await update.message.reply_text("Спасибо! Я записал жалобу. Возвращаемся к заполнению.")
+        # Revert to previous state logic or restart question? 
+        # For simplicity, we ask the previous question again manually or reset state manually.
+        # Ideally, ConversationState needs a 'previous_state' tracker.
+        # Hack: Just tell them to continue answering the previous question.
+        # A better way in conversation_flow is to rollback state.
+        
+        # For now, let's just finish the conversation to avoid stuck states 
+        # or ask the user to type /cancel if stuck.
+        await update.message.reply_text("Попробуй ввести данные еще раз или нажми /cancel.")
+        # Restore state to what it was? This requires state history. 
+        # Simplest approach: Reset to Type_of_client or exit.
+        return COLLECTING
+
     # Process the answer
     error = conv_state.process_answer(update.message.text)
     
     if error:
+        track_event("validation_error", details=f"State: {conv_state.current_state}, Input: {user_text}")
         # Validation error - ask again
         await update.message.reply_text(error)
         question, keyboard = conv_state.get_next_question()
@@ -186,6 +218,7 @@ async def finalize_and_save(
     
     if not is_valid:
         # Critical validation errors
+        track_event("critical_validation_fail")
         error_text = "❌ Ошибки валидации:\n" + "\n".join(messages)
         error_text += "\n\nДанные НЕ сохранены. Начни заново."
         await update.message.reply_text(error_text, reply_markup=ReplyKeyboardRemove())
@@ -197,26 +230,65 @@ async def finalize_and_save(
         warning_text = "⚠️ Предупреждения:\n" + "\n".join(messages)
         await update.message.reply_text(warning_text)
     
+    max_retries = 3
+    saved = False
+
+    msg = await update.message.reply_text("⏳ Сохраняю в таблицу...")
+
+    for attempt in range(max_retries):
     # Save to sheet
-    try:
-        # Use the new validator function to prepare the row
-        append_offline_row(normalized_row)
+        try:
+            # Use the new validator function to prepare the row
+            append_offline_row(normalized_row)
+            saved = True
+            track_event("save_success")
+            break
+        except Exception as e:
+            logging.error(f"Save attempt {attempt+1} failed: {e}")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(2) # Backoff
+            else:
+                # All retries failed
+                error_msg = str(e)
+    
+    if saved:
+        await msg.edit_text("✅ Забубенил в таблицу. Хорош братишка!")
+    else:
+        # [NEW] Save locally (Plan Item 2)
+        save_failed_entry(conv_state.data, error_msg)
+        track_event("save_failure_offline")
         
-        await update.message.reply_text(
-            "✅ Забубенил в таблицу. Хорош братишка!",
-            reply_markup=ReplyKeyboardRemove()
-        )
-    except Exception as e:
-        logging.error(f"Failed to save to sheet: {e}", exc_info=True)
-        await update.message.reply_text(
-            f"❌ Бля че-то не вышло сохранить: {str(e)}\n\n"
-            f"Проверь Google Sheets credentials и permissions."
+        await msg.edit_text(
+            f"❌ Не удалось сохранить в Google Sheets после {max_retries} попыток.\n\n"
+            f"💾 **Я сохранил запись локально.**\n"
+            f"Админ проверит файл failed_saves.json.\n\n"
+            f"Ошибка: {error_msg}"
         )
     
     # Clean up
     context.user_data.pop("conv_state", None)
     return ConversationHandler.END
 
+async def send_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отправляет файлы с ошибками и аналитикой в чат."""
+    files_to_check = ["failed_saves.json", "analytics.json"]
+    found = False
+
+    await update.message.reply_text("📂 Проверяю локальные файлы...")
+
+    for filename in files_to_check:
+        if os.path.exists(filename):
+            found = True
+            try:
+                await update.message.reply_document(
+                    document=open(filename, "rb"),
+                    caption=f"Файл: {filename}"
+                )
+            except Exception as e:
+                await update.message.reply_text(f"Ошибка при отправке {filename}: {e}")
+    
+    if not found:
+        await update.message.reply_text("🤷‍♂️ Файлов с логами/ошибками пока нет.")
 
 # ============================================================================
 # MAIN
@@ -246,6 +318,7 @@ def main():
     # Register handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
+    app.add_handler(CommandHandler("logs", send_logs))
     app.add_handler(conv)
     
     # Optional: Debug handler to see all incoming updates

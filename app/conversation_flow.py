@@ -20,6 +20,9 @@ STATE_CONTACT_LEFT = "contact_left"
 STATE_SOURCE = "source"
 STATE_SHORT_NOTE = "short_note"
 STATE_COMPLETE = "complete"
+STATE_FEEDBACK = "feedback"
+
+BTN_REPORT_PROBLEM = "Что-то не так? (Report)"
 
 # Quick keyboards
 TYPE_CLIENT_KB = [["новый"], ["повторный"], ["контрактник/мастер"], ["оптовик"]]
@@ -95,10 +98,19 @@ class ConversationState:
         
         elif self.current_state == STATE_SHORT_NOTE:
             return ("Ну в кратце расскажи что-то еще, а если нечего то /skip", None)
+            
+        # [NEW] Feedback State
+        elif self.current_state == STATE_FEEDBACK:
+            return ("Опиши, что пошло не так? Я передам админу:", None)
         
         return None
     
     def process_answer(self, answer: str) -> Optional[str]:
+        if self.current_state == STATE_FEEDBACK:
+            # We don't save this to the main 'data' dict usually, 
+            # but we return it so the bot handler can log it.
+            # We return None (no error) and let the bot handler manage the logic.
+            return None
         """
         Process user's answer and move to next state.
         Returns error message if validation fails, None if OK.
@@ -199,6 +211,7 @@ class ConversationState:
             self.current_state = STATE_COMPLETE
         
         return None
+        
     
     def skip_short_note(self):
         """Skip the short note and complete."""
@@ -282,3 +295,4 @@ class ConversationState:
             return val
         except:
             return None
+    
