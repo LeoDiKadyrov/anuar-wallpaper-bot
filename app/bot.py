@@ -106,7 +106,8 @@ async def choosing_extra(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Купил или не купил? Purchase status?", reply_markup=ReplyKeyboardMarkup(STATUS_KB, one_time_keyboard=True))
     elif not row.get("Purchase_status"):
         row["Purchase_status"] = text
-        if text == "купили":
+        tnorm = (text or "").lower().strip()
+        if tnorm == "купили":
             await update.message.reply_text("Че там брат насколько наторговал? Если не знаешь отправляй 0, если знаешь отправляй сумму", reply_markup=ReplyKeyboardRemove())
             return SHORT_NOTE
         else:
@@ -142,18 +143,28 @@ async def choosing_extra(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def short_note_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     row = context.user_data.get("pending_row", {})
-    text = update.message.text.strip()
+    text_raw = update.message.text or ""
+    text = text_raw.strip()
+
+    def parse_number(s: str):
+        if s is None:
+            return None
+
+        s2 = s.strip()
+        if s2 == "":
+            return None
+        try:
+            return float(s2.replace(",", "."))
+        except Exception:
+            return None
 
     # Ветка для покупателей: сначала выжимаем максимум структурных полей,
     # и только ПОТОМ просим комментарий.
     if row.get("Purchase_status") == "купили":
         # 1) Оборот (Ticket_amount)
-        if not row.get("Ticket_amount"):
-            try:
-                amt = float(text.replace(",", "."))
-                row["Ticket_amount"] = amt
-            except Exception:
-                row["Ticket_amount"] = text  # если не число — как есть
+        if row.get("Ticket_amount", "") == "":
+            num = parse_number(text)
+            row["Ticket_amount"] = num if num is not None else text  # если не число — как есть
             await update.message.reply_text(
                 "Че там брат СЕБЕСТОИМОСТЬ? Если не знаешь отправляй 0, если знаешь отправляй сумму",
                 reply_markup=ReplyKeyboardRemove(),
@@ -162,12 +173,9 @@ async def short_note_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return SHORT_NOTE
 
         # 2) Себестоимость (Cost_Price)
-        if not row.get("Cost_Price"):
-            try:
-                cost = float(text.replace(",", "."))
-                row["Cost_Price"] = cost
-            except Exception:
-                row["Cost_Price"] = text
+        if row.get("Cost_Price", "") == "":
+            num = parse_number(text)
+            row["Cost_Price"] = num if num is not None else text
             await update.message.reply_text(
                 "Откуда он узнал про наш секретный бутик обоев? (Source)",
                 reply_markup=ReplyKeyboardMarkup(
@@ -179,15 +187,16 @@ async def short_note_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return CHOOSING_EXTRA
 
         # 3) Что продали и сколько (Product_name, Quantity)
-        if not row.get("Product_name") or not row.get("Quantity"):
+        if row.get("Product_name", "") == "" or row.get("Quantity", "") == "":
             # Пытаемся вытащить количество из введенного текста,
             # если Quantity не был угадан по транскрибации.
-            qty = row.get("Quantity", "") or _guess_quantity_from_transcription(text)
+            #qty = row.get("Quantity", "") or _guess_quantity_from_transcription(text)
             m = re.search(r"\d+(?:[.,]\d+)?", text)
             if m:
                 qty = m.group(0).replace(",", ".")
                 product_name = (text[:m.start()] + text[m.end():]).strip(" ,.-")
             else:
+                qty = row.get("Quantity", "") or ""
                 product_name = text
             row["Product_name"] = product_name
             row["Quantity"] = qty
