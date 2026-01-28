@@ -10,6 +10,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 
 from app.services.stt import transcribe
 from app.services.sheets import append_offline_row
+from app.services.validator import normalize_offline_row
 
 logging.basicConfig(level=logging.INFO)
 TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -187,7 +188,7 @@ async def short_note_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return CHOOSING_EXTRA
 
         # 3) Что продали и сколько (Product_name, Quantity)
-        if row.get("Product_name", "") == "" or row.get("Quantity", "") == "":
+        if row.get("Product_name", "") == "":
             # Пытаемся вытащить количество из введенного текста,
             # если Quantity не был угадан по транскрибации.
             #qty = row.get("Quantity", "") or _guess_quantity_from_transcription(text)
