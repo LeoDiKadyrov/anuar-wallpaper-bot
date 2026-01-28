@@ -22,3 +22,9 @@ Thumbs.db
 # Local DB / data
 db.sqlite3
 /uploads/
+
+.venv/
+app/services/models/
+credentials.json
+debug_last.wav
+str

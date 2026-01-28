@@ -30,11 +30,3 @@ def append_offline_row(row_dict: dict):
         values.append(row_dict.get(h, ""))
     ws.append_row(values, value_input_option="USER_ENTERED")
     return True
-
-#def append_target_row(row_dict: dict):
-    #sh = get_sheet()
-    #ws = sh.worksheet("Target Leads")
-   # header = ws.row_values(1)
-  #  values = [row_dict.get(h, "") for h in header]
- #   ws.append_row(values, value_input_option="USER_ENTERED")
-#    return True
