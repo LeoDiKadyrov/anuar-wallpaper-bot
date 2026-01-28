@@ -69,42 +69,47 @@ class ConversationState:
         Returns (question_text, keyboard) for the next state.
         Returns None if conversation is complete.
         """
+        report_btn_row = [[BTN_REPORT_PROBLEM]]
+        
         if self.current_state == STATE_TYPE_CLIENT:
-            return ("Выбери баля Type_of_client", TYPE_CLIENT_KB)
+            # Add report button to the existing list
+            return ("Выбери баля Type_of_client", TYPE_CLIENT_KB + report_btn_row)
         
         elif self.current_state == STATE_BEHAVIOR:
-            return ("Че он делал? Behavior", BEHAVIOR_KB)
+            return ("Че он делал? Behavior", BEHAVIOR_KB + report_btn_row)
         
         elif self.current_state == STATE_PURCHASE_STATUS:
-            return ("Купил или не купил? Purchase status?", STATUS_KB)
+            return ("Купил или не купил? Purchase status?", STATUS_KB + report_btn_row)
         
         elif self.current_state == STATE_TICKET_AMOUNT:
-            return ("Че там брат насколько наторговал? Если не знаешь отправляй 0, если знаешь отправляй сумму", None)
+            # Currently returns None (which removes keyboard). 
+            # If you want the report button here too, return report_btn_row instead of None.
+            return ("Че там брат насколько наторговал? Если не знаешь отправляй 0, если знаешь отправляй сумму", report_btn_row)
         
         elif self.current_state == STATE_COST_PRICE:
-            return ("Че там брат СЕБЕСТОИМОСТЬ? Если не знаешь отправляй 0, если знаешь отправляй сумму", None)
+            return ("Че там брат СЕБЕСТОИМОСТЬ? Если не знаешь отправляй 0, если знаешь отправляй сумму", report_btn_row)
         
         elif self.current_state == STATE_PRODUCT_INFO:
-            return ("Что именно продали и в каком количестве? Например: 'флизелиновые обои, 3 рулона'", None)
+            return ("Что именно продали и в каком количестве? Например: 'флизелиновые обои, 3 рулона'", report_btn_row)
         
         elif self.current_state == STATE_REASON_NOT_BUYING:
-            return ("А че не купили? Почему? Отправляй пункты из списка или напиши коротко", REASON_KB)
+            return ("А че не купили? Почему? Отправляй пункты из списка или напиши коротко", REASON_KB + report_btn_row)
         
         elif self.current_state == STATE_CONTACT_LEFT:
-            return ("Хотя бы контакт оставил? (да/нет)", YESNO_KB)
+            return ("Хотя бы контакт оставил? (да/нет)", YESNO_KB + report_btn_row)
         
         elif self.current_state == STATE_SOURCE:
-            return ("Откуда он узнал про наш секретный бутик обоев? (Source)", SOURCE_KB)
+            return ("Откуда он узнал про наш секретный бутик обоев? (Source)", SOURCE_KB + report_btn_row)
         
         elif self.current_state == STATE_SHORT_NOTE:
-            return ("Ну в кратце расскажи что-то еще, а если нечего то /skip", None)
+            return ("Ну в кратце расскажи что-то еще, а если нечего то /skip", report_btn_row)
             
-        # [NEW] Feedback State
         elif self.current_state == STATE_FEEDBACK:
+            # No report button needed inside the report menu itself
             return ("Опиши, что пошло не так? Я передам админу:", None)
         
         return None
-    
+        
     def process_answer(self, answer: str) -> Optional[str]:
         if self.current_state == STATE_FEEDBACK:
             # We don't save this to the main 'data' dict usually, 

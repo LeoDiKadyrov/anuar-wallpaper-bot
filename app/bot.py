@@ -35,9 +35,15 @@ COLLECTING = 1
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command."""
+    # Force clear the conversation state if it exists
+    context.user_data.pop("conv_state", None)
+    
     await update.message.reply_text(
-        "Бот готов. Отправляй голосовое, брат. Используй /help для команд."
+        "Бот готов. Отправляй голосовое, брат. Используй /help для команд.",
+        reply_markup=ReplyKeyboardRemove()  # Clean up any lingering keyboards
     )
+    # Important: Return END to stop any active conversation
+    return ConversationHandler.END
 
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -232,6 +238,7 @@ async def finalize_and_save(
     
     max_retries = 3
     saved = False
+    error_msg = ""
 
     msg = await update.message.reply_text("⏳ Сохраняю в таблицу...")
 
@@ -310,7 +317,8 @@ def main():
         },
         fallbacks=[
             CommandHandler("skip", skip_short_note),
-            CommandHandler("cancel", cancel)
+            CommandHandler("cancel", cancel),
+            CommandHandler("start", start)
         ],
         allow_reentry=True
     )
