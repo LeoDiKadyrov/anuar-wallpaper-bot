@@ -1,6 +1,8 @@
 # app/bot.py
 from dotenv import load_dotenv
 import os
+
+from app.services.ai_extractor import extract_data_with_gemini
 load_dotenv()
 
 import logging
@@ -87,6 +89,7 @@ async def voice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Transcribe
         text = transcribe(local_path)
+
     except Exception as e:
         await msg.reply_text(f"Блять я захуярил голосовое: {str(e)}")
         return ConversationHandler.END
@@ -101,9 +104,17 @@ async def voice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Show transcription
     display_text = text[:800] + "..." if len(text) > 800 else text
     await msg.reply_text(f"Транскрибация: {display_text}")
+
+    await msg.reply_text("🤖 Анализирую текст через Gemini...")
+    extracted_data = extract_data_with_gemini(text)
     
     # Initialize conversation state
     conv_state = ConversationState(text, update.message.date)
+
+    for key, value in extracted_data.items():
+        if value:
+            conv_state.data[key] = value
+
     context.user_data["conv_state"] = conv_state
     
     # Ask first question
