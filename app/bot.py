@@ -111,14 +111,18 @@ async def voice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Initialize conversation state
     conv_state = ConversationState(text, update.message.date)
 
-    for key, value in extracted_data.items():
-        if value:
-            conv_state.data[key] = value
+    conv_state.apply_extracted_data(extracted_data)
+    # --- CHANGED CODE END ---
 
     context.user_data["conv_state"] = conv_state
     
-    # Ask first question
+    # Ask first question (which might now be the 3rd or 4th question!)
     question, keyboard = conv_state.get_next_question()
+    
+    # Check if AI filled EVERYTHING (Question is None)
+    if not question:
+        return await finalize_and_save(update, context, conv_state)
+
     if keyboard:
         await msg.reply_text(
             question, 

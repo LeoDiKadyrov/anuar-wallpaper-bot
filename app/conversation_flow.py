@@ -5,8 +5,11 @@ Separates business logic from telegram handlers.
 """
 import re
 import math
+import logging
 from typing import Dict, Any, Optional
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 # Conversation states
 STATE_TYPE_CLIENT = "type_client"
@@ -215,8 +218,261 @@ class ConversationState:
             self.data["Short_note"] = answer
             self.current_state = STATE_COMPLETE
         
+        # After processing answer, auto-advance through any pre-filled fields
+        self._auto_advance_through_filled_fields()
+        
         return None
         
+    # Add this method inside the ConversationState class
+
+    def _auto_advance_through_filled_fields(self):
+        """
+        Helper: Automatically advance state machine through fields that are already filled.
+        Called after user answers a question to skip over pre-filled fields.
+        """
+        max_iterations = 15
+        for _ in range(max_iterations):
+            if self.is_complete():
+                break
+                
+            current_state = self.current_state
+            
+            # Check if current state's field is already filled, and advance if so
+            if current_state == STATE_TYPE_CLIENT:
+                if self.data.get("Type_of_client"):
+                    self.current_state = STATE_BEHAVIOR
+                    continue
+                break
+                
+            elif current_state == STATE_BEHAVIOR:
+                if self.data.get("Behavior"):
+                    self.current_state = STATE_PURCHASE_STATUS
+                    continue
+                break
+                
+            elif current_state == STATE_PURCHASE_STATUS:
+                if self.data.get("Purchase_status"):
+                    purchase_status = self.data.get("Purchase_status", "").lower().strip()
+                    if purchase_status == "купили":
+                        self.current_state = STATE_TICKET_AMOUNT
+                    else:
+                        self.current_state = STATE_REASON_NOT_BUYING
+                    continue
+                break
+                
+            elif current_state == STATE_TICKET_AMOUNT:
+                if self.data.get("Ticket_amount") is not None or self.data.get("Ticket_amount") == 0:
+                    self.current_state = STATE_COST_PRICE
+                    continue
+                break
+                
+            elif current_state == STATE_COST_PRICE:
+                # Cost_Price can be empty, always advance
+                self.current_state = STATE_SOURCE
+                continue
+                
+            elif current_state == STATE_REASON_NOT_BUYING:
+                if self.data.get("Reason_not_buying"):
+                    self.current_state = STATE_CONTACT_LEFT
+                    continue
+                break
+                
+            elif current_state == STATE_CONTACT_LEFT:
+                # Contact_left is not auto-filled, stop here
+                break
+                
+            elif current_state == STATE_SOURCE:
+                if self.data.get("Source"):
+                    purchase_status = self.data.get("Purchase_status", "").lower().strip()
+                    if purchase_status == "купили":
+                        self.current_state = STATE_PRODUCT_INFO
+                    else:
+                        self.current_state = STATE_SHORT_NOTE
+                    continue
+                break
+                
+            elif current_state == STATE_PRODUCT_INFO:
+                if self.data.get("Product_name") or self.data.get("Quantity"):
+                    self.current_state = STATE_SHORT_NOTE
+                    continue
+                break
+                
+            elif current_state == STATE_SHORT_NOTE:
+                # Always stop at short note (user can skip)
+                break
+                
+            else:
+                break
+
+    def _advance_state_for_missing_field(self):
+        """
+        Helper: Advance state machine to next state when current field is missing.
+        Respects branching logic (e.g., Purchase_status determines next state).
+        """
+        if self.current_state == STATE_TYPE_CLIENT:
+            self.current_state = STATE_BEHAVIOR
+        elif self.current_state == STATE_BEHAVIOR:
+            self.current_state = STATE_PURCHASE_STATUS
+        elif self.current_state == STATE_PURCHASE_STATUS:
+            # Branch based on what we have in data (might be filled already)
+            purchase_status = self.data.get("Purchase_status", "").lower().strip()
+            if purchase_status == "купили":
+                self.current_state = STATE_TICKET_AMOUNT
+            else:
+                self.current_state = STATE_REASON_NOT_BUYING
+        elif self.current_state == STATE_TICKET_AMOUNT:
+            self.current_state = STATE_COST_PRICE
+        elif self.current_state == STATE_COST_PRICE:
+            self.current_state = STATE_SOURCE
+        elif self.current_state == STATE_REASON_NOT_BUYING:
+            self.current_state = STATE_CONTACT_LEFT
+        elif self.current_state == STATE_CONTACT_LEFT:
+            self.current_state = STATE_SOURCE
+        elif self.current_state == STATE_SOURCE:
+            # Branch: if they bought, ask for product info, else short note
+            purchase_status = self.data.get("Purchase_status", "").lower().strip()
+            if purchase_status == "купили":
+                self.current_state = STATE_PRODUCT_INFO
+            else:
+                self.current_state = STATE_SHORT_NOTE
+        elif self.current_state == STATE_PRODUCT_INFO:
+            self.current_state = STATE_SHORT_NOTE
+        # STATE_SHORT_NOTE and STATE_COMPLETE don't advance further
+
+    def apply_extracted_data(self, extracted: Dict[str, Any]):
+        """
+        Auto-fills the conversation using data extracted by AI.
+        Strategy: Fill all available fields directly, then advance state machine to first missing field.
+        """
+        if not extracted:
+            logger.info("No extracted data to apply")
+            return
+            
+        logger.info(f"Applying extracted data, starting from state: {self.current_state}")
+        logger.info(f"Extracted data: {extracted}")
+        
+        # Step 1: Fill all available fields directly into self.data (bypassing state machine)
+        # This allows us to fill fields out of order
+        
+        # Fill simple fields directly
+        if extracted.get("Type_of_client"):
+            self.data["Type_of_client"] = extracted["Type_of_client"]
+            logger.info(f"Direct-filled Type_of_client: {extracted['Type_of_client']}")
+        
+        if extracted.get("Behavior"):
+            self.data["Behavior"] = extracted["Behavior"]
+            logger.info(f"Direct-filled Behavior: {extracted['Behavior']}")
+        
+        if extracted.get("Purchase_status"):
+            self.data["Purchase_status"] = extracted["Purchase_status"]
+            logger.info(f"Direct-filled Purchase_status: {extracted['Purchase_status']}")
+        
+        if extracted.get("Source"):
+            self.data["Source"] = extracted["Source"]
+            logger.info(f"Direct-filled Source: {extracted['Source']}")
+        
+        if extracted.get("Reason_not_buying"):
+            self.data["Reason_not_buying"] = extracted["Reason_not_buying"]
+            logger.info(f"Direct-filled Reason_not_buying: {extracted['Reason_not_buying']}")
+        
+        # Fill numeric fields (validate first)
+        if extracted.get("Ticket_amount") is not None:
+            ticket_str = str(extracted["Ticket_amount"])
+            ticket_num = self._parse_number(ticket_str)
+            if ticket_num is not None and ticket_num >= 0:
+                self.data["Ticket_amount"] = ticket_num
+                logger.info(f"Direct-filled Ticket_amount: {ticket_num}")
+        
+        if extracted.get("Cost_Price") is not None:
+            cost_str = str(extracted["Cost_Price"])
+            cost_num = self._parse_number(cost_str)
+            if cost_num is not None and cost_num >= 0:
+                self.data["Cost_Price"] = cost_num
+                logger.info(f"Direct-filled Cost_Price: {cost_num}")
+        
+        # Fill product info
+        if extracted.get("Product_name"):
+            self.data["Product_name"] = extracted["Product_name"]
+            logger.info(f"Direct-filled Product_name: {extracted['Product_name']}")
+        
+        if extracted.get("Quantity") is not None:
+            qty_str = str(extracted["Quantity"])
+            qty_num = self._parse_number(qty_str)
+            if qty_num is not None:
+                self.data["Quantity"] = qty_num if abs(qty_num - round(qty_num)) < 1e-9 else round(qty_num, 3)
+                logger.info(f"Direct-filled Quantity: {self.data['Quantity']}")
+        
+        # Step 2: Advance state machine to the first missing field
+        # We need to respect the order: Type_of_client -> Behavior -> Purchase_status -> ...
+        # and handle branching logic
+        
+        while not self.is_complete():
+            current_state = self.current_state
+            
+            # Check if current state's field is filled
+            if current_state == STATE_TYPE_CLIENT:
+                if not self.data.get("Type_of_client"):
+                    break  # Stop and ask user
+                self.current_state = STATE_BEHAVIOR
+                
+            elif current_state == STATE_BEHAVIOR:
+                if not self.data.get("Behavior"):
+                    break  # Stop and ask user
+                self.current_state = STATE_PURCHASE_STATUS
+                
+            elif current_state == STATE_PURCHASE_STATUS:
+                if not self.data.get("Purchase_status"):
+                    break  # Stop and ask user
+                # Branch based on purchase status
+                purchase_status = self.data.get("Purchase_status", "").lower().strip()
+                if purchase_status == "купили":
+                    self.current_state = STATE_TICKET_AMOUNT
+                else:
+                    self.current_state = STATE_REASON_NOT_BUYING
+                    
+            elif current_state == STATE_TICKET_AMOUNT:
+                if not self.data.get("Ticket_amount") and self.data.get("Ticket_amount") != 0:
+                    break  # Stop and ask user
+                self.current_state = STATE_COST_PRICE
+                
+            elif current_state == STATE_COST_PRICE:
+                # Cost_Price can be 0 or empty, so we always advance
+                self.current_state = STATE_SOURCE
+                
+            elif current_state == STATE_REASON_NOT_BUYING:
+                if not self.data.get("Reason_not_buying"):
+                    break  # Stop and ask user
+                self.current_state = STATE_CONTACT_LEFT
+                
+            elif current_state == STATE_CONTACT_LEFT:
+                # Contact_left is not extracted by Gemini, so we stop here
+                break
+                
+            elif current_state == STATE_SOURCE:
+                if not self.data.get("Source"):
+                    break  # Stop and ask user
+                # Branch: if they bought, ask for product info, else short note
+                purchase_status = self.data.get("Purchase_status", "").lower().strip()
+                if purchase_status == "купили":
+                    self.current_state = STATE_PRODUCT_INFO
+                else:
+                    self.current_state = STATE_SHORT_NOTE
+                    
+            elif current_state == STATE_PRODUCT_INFO:
+                # Check if we have product info
+                if not self.data.get("Product_name") and not self.data.get("Quantity"):
+                    break  # Stop and ask user
+                self.current_state = STATE_SHORT_NOTE
+                
+            elif current_state == STATE_SHORT_NOTE:
+                # Short note is optional, always stop here
+                break
+                
+            else:
+                # Unknown state, stop
+                break
+        
+        logger.info(f"Auto-fill complete. Current state: {self.current_state}")
     
     def skip_short_note(self):
         """Skip the short note and complete."""
