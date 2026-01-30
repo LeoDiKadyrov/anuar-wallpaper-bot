@@ -1,0 +1,62 @@
+---
+description: Best practices for speech recognition using Vosk
+globs: **/*.py
+alwaysApply: false
+---
+
+# Vosk Best Practices
+
+## Use Pre-trained Models
+
+```python
+# ✅ GOOD - Load pre-trained model
+from vosk import Model, KaldiRecognizer
+
+model_path = "./models/vosk-model-small-ru-0.22"
+model = Model(model_path)
+rec = KaldiRecognizer(model, 16000)
+
+# ❌ BAD - Training your own model (complex, unnecessary)
+# Don't train from scratch; use official models
+```
+
+## Optimize Audio Input Quality
+
+```python
+# ✅ GOOD - Convert to 16kHz mono 16-bit PCM
+from pydub import AudioSegment
+
+sound = AudioSegment.from_file(filepath)
+sound = sound.set_frame_rate(16000).set_channels(1).set_sample_width(2)
+sound.export("converted.wav", format="wav")
+
+# ❌ BAD - Use raw audio without conversion
+# Vosk expects specific format: 16kHz, mono, 16-bit
+```
+
+## Handle Recognition Errors
+
+```python
+# ✅ GOOD - Graceful error handling
+try:
+    model = Model(model_path)
+    text = transcribe(audio_file)
+except Exception as e:
+    logging.error(f"Transcription failed: {e}")
+    text = ""  # Fallback to empty
+
+# ❌ BAD - Unhandled exceptions
+model = Model(model_path)  # Crashes if model missing
+```
+
+## Use Async Processing for Real-time Apps
+
+```python
+# ✅ GOOD - Non-blocking transcription
+async def voice_handler(update, context):
+    await update.message.reply_text("Processing...")
+    text = await asyncio.to_thread(transcribe, filepath)
+
+# ❌ BAD - Blocking the event loop
+text = transcribe(filepath)  # Blocks async handler
+```

@@ -1,0 +1,64 @@
+---
+description: Best practices for managing environment variables with python-dotenv
+globs: **/*.py
+alwaysApply: false
+---
+
+# Python-Dotenv Best Practices
+
+## Load Environment Variables Early
+
+```python
+# ✅ GOOD - Load at the top before other imports use env vars
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+
+TOKEN = os.getenv("TELEGRAM_TOKEN")
+
+# ❌ BAD - Loading after accessing env vars
+import os
+TOKEN = os.getenv("TELEGRAM_TOKEN")  # May be None
+load_dotenv()  # Too late
+```
+
+## Use Descriptive Variable Names
+
+```python
+# ✅ GOOD - Clear, specific names
+TELEGRAM_TOKEN=your_bot_token_here
+SPREADSHEET_NAME=Anuar Traffic 2026
+GOOGLE_CREDENTIALS_JSON=./credentials.json
+
+# ❌ BAD - Vague names
+TOKEN=abc123
+NAME=MySheet
+FILE=creds.json
+```
+
+## Add .env to .gitignore
+
+```bash
+# ✅ GOOD - .gitignore contents
+.env
+credentials.json
+*.env.local
+
+# ❌ BAD - Committing secrets
+# (no .gitignore entry for .env)
+```
+
+## Validate Required Environment Variables
+
+```python
+# ✅ GOOD - Validate on startup
+load_dotenv()
+TOKEN = os.getenv("TELEGRAM_TOKEN")
+if not TOKEN:
+    raise RuntimeError("TELEGRAM_TOKEN not set in .env")
+
+# ❌ BAD - Assume variables exist
+TOKEN = os.getenv("TELEGRAM_TOKEN")
+app.run(TOKEN)  # Crashes if None
+```

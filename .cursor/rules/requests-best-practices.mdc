@@ -1,0 +1,68 @@
+---
+description: Best practices for making HTTP requests using requests
+globs: **/*.py
+alwaysApply: false
+---
+
+# Requests Best Practices
+
+## Use Session Objects for Persistent Connections
+
+```python
+# ✅ GOOD - Reuse connections with session
+import requests
+
+session = requests.Session()
+session.headers.update({"User-Agent": "MyBot/1.0"})
+response1 = session.get("https://api.example.com/data")
+response2 = session.get("https://api.example.com/more")
+
+# ❌ BAD - New connection each time
+response1 = requests.get("https://api.example.com/data")
+response2 = requests.get("https://api.example.com/more")
+```
+
+## Handle Network Errors and Timeouts
+
+```python
+# ✅ GOOD - Handle exceptions
+import requests
+
+try:
+    response = requests.get(url, timeout=10)
+    response.raise_for_status()
+except requests.exceptions.Timeout:
+    logging.error("Request timed out")
+except requests.exceptions.RequestException as e:
+    logging.error(f"Request failed: {e}")
+
+# ❌ BAD - Unhandled network errors
+response = requests.get(url)  # Hangs indefinitely
+```
+
+## Always Use Timeout Parameter
+
+```python
+# ✅ GOOD - Set timeout to avoid hanging
+response = requests.get(url, timeout=10)
+
+# ❌ BAD - No timeout (can hang forever)
+response = requests.get(url)
+```
+
+## Validate Response Status Codes
+
+```python
+# ✅ GOOD - Check status and handle errors
+response = requests.get(url, timeout=10)
+if response.status_code == 200:
+    data = response.json()
+else:
+    raise RuntimeError(f"API error: {response.status_code}")
+
+# Or use raise_for_status()
+response.raise_for_status()
+
+# ❌ BAD - Assume success
+data = response.json()  # May fail on error responses
+```

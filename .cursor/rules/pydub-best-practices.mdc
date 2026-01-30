@@ -1,0 +1,61 @@
+---
+description: Best practices for audio manipulation using pydub
+globs: **/*.py
+alwaysApply: false
+---
+
+# Pydub Best Practices
+
+## Use AudioSegment for Audio Handling
+
+```python
+# ✅ GOOD - AudioSegment handles multiple formats
+from pydub import AudioSegment
+
+sound = AudioSegment.from_file("audio.ogg")
+sound = sound.set_frame_rate(16000).set_channels(1)
+sound.export("output.wav", format="wav")
+
+# ❌ BAD - Manual format conversion
+# Don't parse audio formats manually
+```
+
+## Convert to Consistent Format Before Processing
+
+```python
+# ✅ GOOD - Standardize to 16kHz mono 16-bit
+sound = AudioSegment.from_file(filepath)
+sound = sound.set_frame_rate(16000).set_channels(1).set_sample_width(2)
+
+# ❌ BAD - Process without normalization
+sound = AudioSegment.from_file(filepath)
+# Varying formats cause processing issues
+```
+
+## Use Built-in Effects for Enhancement
+
+```python
+# ✅ GOOD - Apply filters and effects
+from pydub.effects import normalize
+
+sound = AudioSegment.from_file("audio.wav")
+sound = normalize(sound)  # Normalize volume
+sound = sound.low_pass_filter(3000)  # Remove high freq noise
+
+# ❌ BAD - Manual signal processing
+# Don't implement DSP from scratch
+```
+
+## Handle File I/O Exceptions
+
+```python
+# ✅ GOOD - Graceful error handling
+try:
+    sound = AudioSegment.from_file(filepath)
+    sound.export(output_path, format="wav")
+except Exception as e:
+    raise RuntimeError(f"Audio processing failed: {e}")
+
+# ❌ BAD - Unhandled errors
+sound = AudioSegment.from_file(filepath)  # Crashes on corrupt file
+```

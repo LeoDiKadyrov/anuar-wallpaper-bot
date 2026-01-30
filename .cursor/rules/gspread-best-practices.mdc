@@ -1,0 +1,60 @@
+---
+description: Best practices for interacting with Google Sheets using gspread
+globs: **/*.py
+alwaysApply: false
+---
+
+# Gspread Best Practices
+
+## Use Service Account Credentials
+
+```python
+# ✅ GOOD - Service account for secure access
+from google.oauth2.service_account import Credentials
+import gspread
+
+scopes = ["https://www.googleapis.com/auth/spreadsheets", 
+          "https://www.googleapis.com/auth/drive"]
+creds = Credentials.from_service_account_file("credentials.json", scopes=scopes)
+gc = gspread.authorize(creds)
+
+# ❌ BAD - Hardcoded credentials
+gc = gspread.authorize({"private_key": "abc123..."})
+```
+
+## Batch Updates for Performance
+
+```python
+# ✅ GOOD - Single append operation
+ws.append_row(values, value_input_option="USER_ENTERED")
+
+# ❌ BAD - Multiple individual cell updates
+for i, val in enumerate(values):
+    ws.update_cell(row, i+1, val)  # Triggers API call per cell
+```
+
+## Validate Data Before Writing
+
+```python
+# ✅ GOOD - Validate before writing
+def append_row(row_dict):
+    if not row_dict.get("Client_ID"):
+        raise ValueError("Client_ID required")
+    ws.append_row(prepare_values(row_dict))
+
+# ❌ BAD - Write invalid data
+ws.append_row([None, "", None, ...])
+```
+
+## Use get_all_records() for Efficient Retrieval
+
+```python
+# ✅ GOOD - Get all data at once
+records = ws.get_all_records()
+for record in records:
+    process(record)
+
+# ❌ BAD - Row-by-row retrieval
+for i in range(1, ws.row_count):
+    row = ws.row_values(i)  # API call per row
+```

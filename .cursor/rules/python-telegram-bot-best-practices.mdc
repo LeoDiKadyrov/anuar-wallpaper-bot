@@ -1,0 +1,64 @@
+---
+description: Best practices for building Telegram bots using python-telegram-bot
+globs: **/*.py
+alwaysApply: false
+---
+
+# Python-Telegram-Bot Best Practices
+
+## Use ApplicationBuilder for Bot Creation
+
+```python
+# ✅ GOOD
+from telegram.ext import ApplicationBuilder
+
+app = ApplicationBuilder().token(TOKEN).build()
+app.run_polling()
+
+# ❌ BAD - Using deprecated Updater
+from telegram.ext import Updater
+updater = Updater(TOKEN)
+```
+
+## Organize Handlers with ConversationHandler
+
+```python
+# ✅ GOOD - Structured conversation flow
+conv = ConversationHandler(
+    entry_points=[MessageHandler(filters.VOICE, voice_handler)],
+    states={
+        COLLECTING: [MessageHandler(filters.TEXT & ~filters.COMMAND, collect_data)]
+    },
+    fallbacks=[CommandHandler("cancel", cancel)]
+)
+
+# ❌ BAD - Unorganized handler registration
+app.add_handler(MessageHandler(filters.ALL, handle_everything))
+```
+
+## Use context.user_data for State Management
+
+```python
+# ✅ GOOD - Store state in context
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["conv_state"] = ConversationState()
+    return COLLECTING
+
+# ❌ BAD - Global state (not user-specific)
+current_state = {}
+```
+
+## Handle Exceptions Gracefully
+
+```python
+# ✅ GOOD - Prevent crashes with try-except
+try:
+    file = await context.bot.get_file(voice.file_id)
+    await file.download_to_drive(local_path)
+except Exception as e:
+    await msg.reply_text(f"Error: {str(e)}")
+    return ConversationHandler.END
+
+# ❌ BAD - Unhandled exceptions crash the bot
+file = await context.bot.get_file(voice.file_id)
+```

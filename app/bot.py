@@ -2,7 +2,6 @@
 from dotenv import load_dotenv
 import os
 
-from app.services.ai_extractor import extract_data_with_gemini
 load_dotenv()
 
 import logging
@@ -18,6 +17,7 @@ from telegram.ext import (
     ConversationHandler
 )
 
+from app.services.ai_extractor import extract_data_with_gemini
 from app.services.stt import transcribe
 from app.services.sheets import append_offline_row
 from app.services.validator import validate_and_normalize_row, prepare_row_for_sheet
@@ -26,6 +26,8 @@ from app.services.local_store import save_failed_entry, track_event
 
 logging.basicConfig(level=logging.INFO)
 TOKEN = os.getenv("TELEGRAM_TOKEN")
+if not TOKEN:
+    raise RuntimeError("TELEGRAM_TOKEN not set in .env")
 
 # Conversation handler state
 COLLECTING = 1
@@ -87,8 +89,8 @@ async def voice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         local_path = os.path.join(temp_dir, f"{voice.file_unique_id}.ogg")
         await file.download_to_drive(local_path)
         
-        # Transcribe
-        text = transcribe(local_path)
+        # Transcribe (non-blocking to keep event loop responsive)
+        text = await asyncio.to_thread(transcribe, local_path)
 
     except Exception as e:
         await msg.reply_text(f"Блять я захуярил голосовое: {str(e)}")
