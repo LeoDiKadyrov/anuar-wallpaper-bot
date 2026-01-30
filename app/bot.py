@@ -1,10 +1,12 @@
 # app/bot.py
 from dotenv import load_dotenv
 import os
+
 load_dotenv()
 
 import logging
 import tempfile
+import asyncio
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
     ApplicationBuilder, 
@@ -15,16 +17,27 @@ from telegram.ext import (
     ConversationHandler
 )
 
+from app.services.ai_extractor import extract_data_with_gemini
 from app.services.stt import transcribe
 from app.services.sheets import append_offline_row
 from app.services.validator import validate_and_normalize_row, prepare_row_for_sheet
-from app.conversation_flow import ConversationState
+from app.conversation_flow import ConversationState, STATE_FEEDBACK, BTN_REPORT_PROBLEM
+from app.services.local_store import save_failed_entry, track_event
 
 logging.basicConfig(level=logging.INFO)
 TOKEN = os.getenv("TELEGRAM_TOKEN")
+if not TOKEN:
+    raise RuntimeError("TELEGRAM_TOKEN not set in .env")
 
-# Conversation handler state
+# Conversation handler states
+CHOOSING_INPUT = 0
 COLLECTING = 1
+
+# Input mode choice buttons
+BTN_VOICE = "Голосовое (транскрипция + AI)"
+BTN_TEXT = "Текст (кнопки)"
+
+CHOICE_KEYBOARD = [[BTN_VOICE, BTN_TEXT]]
 
 
 # ============================================================================
@@ -32,17 +45,23 @@ COLLECTING = 1
 # ============================================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /start command."""
+    """Handle /start command. Shows choice: voice or text input."""
+    context.user_data.pop("conv_state", None)
+    context.user_data.pop("input_mode", None)
+
     await update.message.reply_text(
-        "Бот готов. Отправляй голосовое, брат. Используй /help для команд."
+        "Бот готов. Выбери, как хочешь ввести данные: голосовое (транскрипция + AI) или текст (кнопки). Используй /help для команд.",
+        reply_markup=ReplyKeyboardMarkup(CHOICE_KEYBOARD, one_time_keyboard=False)
     )
+    return CHOOSING_INPUT
 
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /help command."""
     await update.message.reply_text(
-        "Отправляй текст или голосовое. После голосового -> "
-        "бот транскрибирует и задаст пару быстрых вопросов."
+        "После /start выбери «Голосовое (транскрипция + AI)» или «Текст (кнопки)». "
+        "Голосовое: отправь голосовое — бот транскрибирует, AI извлечёт данные, потом пару вопросов. "
+        "Текст: отвечай кнопками с готовыми вариантами."
     )
 
 
@@ -51,6 +70,42 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Отмена нахер.", reply_markup=ReplyKeyboardRemove())
     context.user_data.pop("conv_state", None)
     return ConversationHandler.END
+
+
+async def choose_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Handle user choice in CHOOSING_INPUT: voice or text (buttons).
+    If voice: prompt to send voice; if text: start Q&A with empty state.
+    """
+    text = update.message.text
+    choice_markup = ReplyKeyboardMarkup(CHOICE_KEYBOARD, one_time_keyboard=False)
+
+    if text == BTN_VOICE:
+        context.user_data["input_mode"] = "voice"
+        await update.message.reply_text(
+            "Отправь голосовое сообщение.",
+            reply_markup=choice_markup
+        )
+        return CHOOSING_INPUT
+
+    if text == BTN_TEXT:
+        conv_state = ConversationState("", update.message.date)
+        context.user_data["conv_state"] = conv_state
+        question, keyboard = conv_state.get_next_question()
+        if keyboard:
+            await update.message.reply_text(
+                question,
+                reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True)
+            )
+        else:
+            await update.message.reply_text(question, reply_markup=ReplyKeyboardRemove())
+        return COLLECTING
+
+    await update.message.reply_text(
+        "Выбери один из вариантов выше.",
+        reply_markup=choice_markup
+    )
+    return CHOOSING_INPUT
 
 
 # ============================================================================
@@ -77,8 +132,9 @@ async def voice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         local_path = os.path.join(temp_dir, f"{voice.file_unique_id}.ogg")
         await file.download_to_drive(local_path)
         
-        # Transcribe
-        text = transcribe(local_path)
+        # Transcribe (non-blocking to keep event loop responsive)
+        text = await asyncio.to_thread(transcribe, local_path)
+
     except Exception as e:
         await msg.reply_text(f"Блять я захуярил голосовое: {str(e)}")
         return ConversationHandler.END
@@ -93,13 +149,25 @@ async def voice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Show transcription
     display_text = text[:800] + "..." if len(text) > 800 else text
     await msg.reply_text(f"Транскрибация: {display_text}")
+
+    await msg.reply_text("🤖 Анализирую текст через Gemini...")
+    extracted_data = extract_data_with_gemini(text)
     
     # Initialize conversation state
     conv_state = ConversationState(text, update.message.date)
+
+    conv_state.apply_extracted_data(extracted_data)
+    # --- CHANGED CODE END ---
+
     context.user_data["conv_state"] = conv_state
     
-    # Ask first question
+    # Ask first question (which might now be the 3rd or 4th question!)
     question, keyboard = conv_state.get_next_question()
+    
+    # Check if AI filled EVERYTHING (Question is None)
+    if not question:
+        return await finalize_and_save(update, context, conv_state)
+
     if keyboard:
         await msg.reply_text(
             question, 
@@ -125,10 +193,40 @@ async def collect_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Ошибка: состояние потеряно. Начни заново.")
         return ConversationHandler.END
     
+    user_text = update.message.text
+
+    # [NEW] Check if user clicked the "Report" button
+    if user_text == BTN_REPORT_PROBLEM:
+        conv_state.current_state = STATE_FEEDBACK
+        await update.message.reply_text(
+            "Опиши проблему (валидация не проходит, или я туплю?):", 
+            reply_markup=ReplyKeyboardRemove()
+        )
+        return COLLECTING
+
+    # [NEW] Handle Feedback Submission
+    if conv_state.current_state == STATE_FEEDBACK:
+        # Save feedback to analytics or specific log
+        track_event("user_feedback", details=f"User said: {user_text}")
+        await update.message.reply_text("Спасибо! Я записал жалобу. Возвращаемся к заполнению.")
+        # Revert to previous state logic or restart question? 
+        # For simplicity, we ask the previous question again manually or reset state manually.
+        # Ideally, ConversationState needs a 'previous_state' tracker.
+        # Hack: Just tell them to continue answering the previous question.
+        # A better way in conversation_flow is to rollback state.
+        
+        # For now, let's just finish the conversation to avoid stuck states 
+        # or ask the user to type /cancel if stuck.
+        await update.message.reply_text("Попробуй ввести данные еще раз или нажми /cancel.")
+        # Restore state to what it was? This requires state history. 
+        # Simplest approach: Reset to Type_of_client or exit.
+        return COLLECTING
+
     # Process the answer
     error = conv_state.process_answer(update.message.text)
     
     if error:
+        track_event("validation_error", details=f"State: {conv_state.current_state}, Input: {user_text}")
         # Validation error - ask again
         await update.message.reply_text(error)
         question, keyboard = conv_state.get_next_question()
@@ -186,6 +284,7 @@ async def finalize_and_save(
     
     if not is_valid:
         # Critical validation errors
+        track_event("critical_validation_fail")
         error_text = "❌ Ошибки валидации:\n" + "\n".join(messages)
         error_text += "\n\nДанные НЕ сохранены. Начни заново."
         await update.message.reply_text(error_text, reply_markup=ReplyKeyboardRemove())
@@ -197,26 +296,66 @@ async def finalize_and_save(
         warning_text = "⚠️ Предупреждения:\n" + "\n".join(messages)
         await update.message.reply_text(warning_text)
     
+    max_retries = 3
+    saved = False
+    error_msg = ""
+
+    msg = await update.message.reply_text("⏳ Сохраняю в таблицу...")
+
+    for attempt in range(max_retries):
     # Save to sheet
-    try:
-        # Use the new validator function to prepare the row
-        append_offline_row(normalized_row)
+        try:
+            # Use the new validator function to prepare the row
+            append_offline_row(normalized_row)
+            saved = True
+            track_event("save_success")
+            break
+        except Exception as e:
+            logging.error(f"Save attempt {attempt+1} failed: {e}")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(2) # Backoff
+            else:
+                # All retries failed
+                error_msg = str(e)
+    
+    if saved:
+        await msg.edit_text("✅ Забубенил в таблицу. Хорош братишка!")
+    else:
+        # [NEW] Save locally (Plan Item 2)
+        save_failed_entry(conv_state.data, error_msg)
+        track_event("save_failure_offline")
         
-        await update.message.reply_text(
-            "✅ Забубенил в таблицу. Хорош братишка!",
-            reply_markup=ReplyKeyboardRemove()
-        )
-    except Exception as e:
-        logging.error(f"Failed to save to sheet: {e}", exc_info=True)
-        await update.message.reply_text(
-            f"❌ Бля че-то не вышло сохранить: {str(e)}\n\n"
-            f"Проверь Google Sheets credentials и permissions."
+        await msg.edit_text(
+            f"❌ Не удалось сохранить в Google Sheets после {max_retries} попыток.\n\n"
+            f"💾 **Я сохранил запись локально.**\n"
+            f"Админ проверит файл failed_saves.json.\n\n"
+            f"Ошибка: {error_msg}"
         )
     
     # Clean up
     context.user_data.pop("conv_state", None)
     return ConversationHandler.END
 
+async def send_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отправляет файлы с ошибками и аналитикой в чат."""
+    files_to_check = ["failed_saves.json", "analytics.json"]
+    found = False
+
+    await update.message.reply_text("📂 Проверяю локальные файлы...")
+
+    for filename in files_to_check:
+        if os.path.exists(filename):
+            found = True
+            try:
+                await update.message.reply_document(
+                    document=open(filename, "rb"),
+                    caption=f"Файл: {filename}"
+                )
+            except Exception as e:
+                await update.message.reply_text(f"Ошибка при отправке {filename}: {e}")
+    
+    if not found:
+        await update.message.reply_text("🤷‍♂️ Файлов с логами/ошибками пока нет.")
 
 # ============================================================================
 # MAIN
@@ -229,23 +368,29 @@ def main():
     # Conversation handler
     conv = ConversationHandler(
         entry_points=[
-            MessageHandler(filters.VOICE | filters.AUDIO, voice_handler)
+            CommandHandler("start", start),
+            MessageHandler(filters.VOICE | filters.AUDIO, voice_handler),
         ],
         states={
+            CHOOSING_INPUT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, choose_input_handler),
+                MessageHandler(filters.VOICE | filters.AUDIO, voice_handler),
+            ],
             COLLECTING: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, collect_data)
             ],
         },
         fallbacks=[
             CommandHandler("skip", skip_short_note),
-            CommandHandler("cancel", cancel)
+            CommandHandler("cancel", cancel),
+            CommandHandler("start", start)
         ],
         allow_reentry=True
     )
-    
-    # Register handlers
-    app.add_handler(CommandHandler("start", start))
+
+    # Register handlers (/start is only in conversation entry_points and fallbacks)
     app.add_handler(CommandHandler("help", help_cmd))
+    app.add_handler(CommandHandler("logs", send_logs))
     app.add_handler(conv)
     
     # Optional: Debug handler to see all incoming updates

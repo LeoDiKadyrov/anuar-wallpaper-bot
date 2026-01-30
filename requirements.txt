@@ -1,7 +1,8 @@
-python-telegram-bot==20.5
+python-telegram-bot>=21.0
 gspread==5.8.0
 google-auth==2.22.0
 python-dotenv==1.0.0
 vosk==0.3.45
 pydub==0.25.1
+google-genai
 requests

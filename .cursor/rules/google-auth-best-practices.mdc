@@ -1,0 +1,59 @@
+---
+description: Best practices for authentication with Google services using google-auth
+globs: **/*.py
+alwaysApply: false
+---
+
+# Google-Auth Best Practices
+
+## Use Service Account for Server Applications
+
+```python
+# ✅ GOOD - Service account for bot/server apps
+from google.oauth2.service_account import Credentials
+
+scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+creds = Credentials.from_service_account_file(
+    "credentials.json", 
+    scopes=scopes
+)
+
+# ❌ BAD - OAuth 2.0 flow for automated scripts
+# OAuth requires user interaction, unsuitable for bots
+```
+
+## Store Credentials Securely
+
+```python
+# ✅ GOOD - Use environment variables
+import os
+CREDS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON", "./credentials.json")
+creds = Credentials.from_service_account_file(CREDS_JSON)
+
+# ❌ BAD - Hardcoded paths or credentials
+creds = Credentials.from_service_account_file("/home/user/secret.json")
+```
+
+## Define Minimal Scopes
+
+```python
+# ✅ GOOD - Only necessary scopes
+scopes = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive"
+]
+
+# ❌ BAD - Requesting excessive permissions
+scopes = ["https://www.googleapis.com/auth/cloud-platform"]
+```
+
+## Handle Token Refresh Automatically
+
+```python
+# ✅ GOOD - Service accounts auto-refresh
+creds = Credentials.from_service_account_file("creds.json")
+gc = gspread.authorize(creds)  # Handles refresh automatically
+
+# ❌ BAD - Manual token management
+# Service accounts don't expire; no manual refresh needed
+```

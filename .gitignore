@@ -28,3 +28,5 @@ app/services/models/
 credentials.json
 debug_last.wav
 str
+analytics.json
+failed_saves.json
