@@ -1,9 +1,10 @@
 # app/bot.py
-from dotenv import load_dotenv
+#from dotenv import load_dotenv
+#import os
+
+#load_dotenv()
+
 import os
-
-load_dotenv()
-
 import logging
 import tempfile
 import asyncio
@@ -16,7 +17,7 @@ from telegram.ext import (
     ContextTypes, 
     ConversationHandler
 )
-
+from app.config import TELEGRAM_TOKEN, setup_logging
 from app.services.ai_extractor import extract_data_with_gemini
 from app.services.stt import transcribe
 from app.services.sheets import append_offline_row
@@ -24,10 +25,14 @@ from app.services.validator import validate_and_normalize_row, prepare_row_for_s
 from app.conversation_flow import ConversationState, STATE_FEEDBACK, BTN_REPORT_PROBLEM
 from app.services.local_store import save_failed_entry, track_event
 
-logging.basicConfig(level=logging.INFO)
-TOKEN = os.getenv("TELEGRAM_TOKEN")
-if not TOKEN:
-    raise RuntimeError("TELEGRAM_TOKEN not set in .env")
+#logging.basicConfig(level=logging.INFO)
+#TOKEN = os.getenv("TELEGRAM_TOKEN")
+#if not TOKEN:
+#    raise RuntimeError("TELEGRAM_TOKEN not set in .env")
+
+# Initialize Logging
+setup_logging()
+logger = logging.getLogger(__name__)
 
 # Conversation handler states
 CHOOSING_INPUT = 0
@@ -36,7 +41,6 @@ COLLECTING = 1
 # Input mode choice buttons
 BTN_VOICE = "Голосовое (транскрипция + AI)"
 BTN_TEXT = "Текст (кнопки)"
-
 CHOICE_KEYBOARD = [[BTN_VOICE, BTN_TEXT]]
 
 
@@ -119,8 +123,7 @@ async def voice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     msg = update.message
     await msg.reply_text("Получил голосовое. Скачиваю и транскрибирую...")
-    
-    # Download voice file
+
     voice = msg.voice or msg.audio
     if not voice:
         await msg.reply_text("Не нашел аудио че-та.")
@@ -136,10 +139,10 @@ async def voice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = await asyncio.to_thread(transcribe, local_path)
 
     except Exception as e:
+        logger.error(f"Transcription failed: {e}", exc_info=True)
         await msg.reply_text(f"Блять я захуярил голосовое: {str(e)}")
         return ConversationHandler.END
-    
-    # Check if transcription is empty
+
     if not text:
         await msg.reply_text(
             "Не смог нормально распознать голос — текст пустой. "
@@ -155,9 +158,7 @@ async def voice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Initialize conversation state
     conv_state = ConversationState(text, update.message.date)
-
     conv_state.apply_extracted_data(extracted_data)
-    # --- CHANGED CODE END ---
 
     context.user_data["conv_state"] = conv_state
     
@@ -363,7 +364,7 @@ async def send_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     """Start the bot."""
-    app = ApplicationBuilder().token(TOKEN).build()
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     
     # Conversation handler
     conv = ConversationHandler(
@@ -393,16 +394,8 @@ def main():
     app.add_handler(CommandHandler("logs", send_logs))
     app.add_handler(conv)
     
-    # Optional: Debug handler to see all incoming updates
-    # Uncomment if you need debugging
-    # async def _debug_all(update, context):
-    #     print("===== UPDATE RECEIVED =====")
-    #     print(update)
-    # app.add_handler(MessageHandler(filters.ALL, _debug_all), group=-1)
-    
-    print("Бот щещес (готов)...")
+    logger.info("Бот щещес (готов)...")
     app.run_polling()
-
 
 if __name__ == "__main__":
     main()
