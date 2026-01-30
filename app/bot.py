@@ -29,8 +29,15 @@ TOKEN = os.getenv("TELEGRAM_TOKEN")
 if not TOKEN:
     raise RuntimeError("TELEGRAM_TOKEN not set in .env")
 
-# Conversation handler state
+# Conversation handler states
+CHOOSING_INPUT = 0
 COLLECTING = 1
+
+# Input mode choice buttons
+BTN_VOICE = "Голосовое (транскрипция + AI)"
+BTN_TEXT = "Текст (кнопки)"
+
+CHOICE_KEYBOARD = [[BTN_VOICE, BTN_TEXT]]
 
 
 # ============================================================================
@@ -38,23 +45,23 @@ COLLECTING = 1
 # ============================================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /start command."""
-    # Force clear the conversation state if it exists
+    """Handle /start command. Shows choice: voice or text input."""
     context.user_data.pop("conv_state", None)
-    
+    context.user_data.pop("input_mode", None)
+
     await update.message.reply_text(
-        "Бот готов. Отправляй голосовое, брат. Используй /help для команд.",
-        reply_markup=ReplyKeyboardRemove()  # Clean up any lingering keyboards
+        "Бот готов. Выбери, как хочешь ввести данные: голосовое (транскрипция + AI) или текст (кнопки). Используй /help для команд.",
+        reply_markup=ReplyKeyboardMarkup(CHOICE_KEYBOARD, one_time_keyboard=False)
     )
-    # Important: Return END to stop any active conversation
-    return ConversationHandler.END
+    return CHOOSING_INPUT
 
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /help command."""
     await update.message.reply_text(
-        "Отправляй текст или голосовое. После голосового -> "
-        "бот транскрибирует и задаст пару быстрых вопросов."
+        "После /start выбери «Голосовое (транскрипция + AI)» или «Текст (кнопки)». "
+        "Голосовое: отправь голосовое — бот транскрибирует, AI извлечёт данные, потом пару вопросов. "
+        "Текст: отвечай кнопками с готовыми вариантами."
     )
 
 
@@ -63,6 +70,42 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Отмена нахер.", reply_markup=ReplyKeyboardRemove())
     context.user_data.pop("conv_state", None)
     return ConversationHandler.END
+
+
+async def choose_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Handle user choice in CHOOSING_INPUT: voice or text (buttons).
+    If voice: prompt to send voice; if text: start Q&A with empty state.
+    """
+    text = update.message.text
+    choice_markup = ReplyKeyboardMarkup(CHOICE_KEYBOARD, one_time_keyboard=False)
+
+    if text == BTN_VOICE:
+        context.user_data["input_mode"] = "voice"
+        await update.message.reply_text(
+            "Отправь голосовое сообщение.",
+            reply_markup=choice_markup
+        )
+        return CHOOSING_INPUT
+
+    if text == BTN_TEXT:
+        conv_state = ConversationState("", update.message.date)
+        context.user_data["conv_state"] = conv_state
+        question, keyboard = conv_state.get_next_question()
+        if keyboard:
+            await update.message.reply_text(
+                question,
+                reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True)
+            )
+        else:
+            await update.message.reply_text(question, reply_markup=ReplyKeyboardRemove())
+        return COLLECTING
+
+    await update.message.reply_text(
+        "Выбери один из вариантов выше.",
+        reply_markup=choice_markup
+    )
+    return CHOOSING_INPUT
 
 
 # ============================================================================
@@ -325,9 +368,14 @@ def main():
     # Conversation handler
     conv = ConversationHandler(
         entry_points=[
-            MessageHandler(filters.VOICE | filters.AUDIO, voice_handler)
+            CommandHandler("start", start),
+            MessageHandler(filters.VOICE | filters.AUDIO, voice_handler),
         ],
         states={
+            CHOOSING_INPUT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, choose_input_handler),
+                MessageHandler(filters.VOICE | filters.AUDIO, voice_handler),
+            ],
             COLLECTING: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, collect_data)
             ],
@@ -339,9 +387,8 @@ def main():
         ],
         allow_reentry=True
     )
-    
-    # Register handlers
-    app.add_handler(CommandHandler("start", start))
+
+    # Register handlers (/start is only in conversation entry_points and fallbacks)
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("logs", send_logs))
     app.add_handler(conv)
