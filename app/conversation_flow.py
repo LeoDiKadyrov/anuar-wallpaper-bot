@@ -87,10 +87,10 @@ class ConversationState:
         elif self.current_state == STATE_TICKET_AMOUNT:
             # Currently returns None (which removes keyboard). 
             # If you want the report button here too, return report_btn_row instead of None.
-            return ("Че там брат насколько наторговал? Если не знаешь отправляй 0, если знаешь отправляй сумму", report_btn_row)
+            return ("Че там брат насколько наторговал? Если не знаешь отправляй 1, если знаешь отправляй сумму", report_btn_row)
         
         elif self.current_state == STATE_COST_PRICE:
-            return ("Че там брат СЕБЕСТОИМОСТЬ? Если не знаешь отправляй 0, если знаешь отправляй сумму", report_btn_row)
+            return ("Че там брат СЕБЕСТОИМОСТЬ? Если не знаешь отправляй 1, если знаешь отправляй сумму", report_btn_row)
         
         elif self.current_state == STATE_PRODUCT_INFO:
             return ("Что именно продали и в каком количестве? Например: 'флизелиновые обои, 3 рулона'", report_btn_row)
@@ -261,15 +261,19 @@ class ConversationState:
                 break
                 
             elif current_state == STATE_TICKET_AMOUNT:
-                if self.data.get("Ticket_amount") is not None or self.data.get("Ticket_amount") == 0:
+                val = self.data.get("Ticket_amount")
+                if val is not None and val != "":
                     self.current_state = STATE_COST_PRICE
                     continue
                 break
                 
             elif current_state == STATE_COST_PRICE:
                 # Cost_Price can be empty, always advance
-                self.current_state = STATE_SOURCE
-                continue
+                val = self.data.get("Cost_Price")
+                if val != "" and val is not None:
+                    self.current_state = STATE_SOURCE
+                    continue
+                break
                 
             elif current_state == STATE_REASON_NOT_BUYING:
                 if self.data.get("Reason_not_buying"):
